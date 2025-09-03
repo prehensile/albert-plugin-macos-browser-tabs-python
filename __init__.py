@@ -12,6 +12,7 @@ md_iid = '3.0'
 md_version = '0.1'
 md_name = 'Browser Tabs (macOS)'
 md_description = 'Lists open tabs in browsers on macOS'
+md_url = "https://github.com/prehensile/albert-plugin-tabs-python"
 md_license = "WTFPL"
 md_authors = ["@prehensile"]
 md_maintainers = ["@prehensile"]
@@ -25,6 +26,7 @@ md_maintainers = ["@prehensile"]
 # TODO
 # - call updateIndexItems whenever the plugin is triggered, with some debounce 
 #
+
 
 list_js = Path(__file__).parent / "list-tabs.js"
 focus_js = Path(__file__).parent / 'focus-tab.js'
