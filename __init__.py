@@ -177,8 +177,6 @@ class Plugin( PluginInstance, IndexQueryHandler ):
                 re.sub(r'[^a-zA-Z]', ' ', parsed_url.path)
             ])
             
-            print( search_str )
-
             # Create searchable string for the item
             index_items.append(
                 IndexItem(
