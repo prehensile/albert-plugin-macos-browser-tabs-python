@@ -49,7 +49,7 @@ function run(args) {
           windowId: wid,
           tabIndex: t,
           iconUrl : iconUrl,
-          match: `${title} ${decodeURIComponent(matchUrl).replace(
+          searchString: `${title} ${decodeURIComponent(matchUrl).replace(
             /[^\w]/g,
             " ",
           )}`,

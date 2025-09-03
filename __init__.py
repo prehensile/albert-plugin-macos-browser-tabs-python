@@ -4,12 +4,13 @@ import threading
 from dataclasses import dataclass
 from typing import List
 from pathlib import Path
+import time
 
 from albert import *
 
 
 md_iid = '3.0'
-md_version = '0.1'
+md_version = '0.2'
 md_name = 'Browser Tabs (macOS)'
 md_description = 'Lists open tabs in browsers on macOS'
 md_url = "https://github.com/prehensile/albert-plugin-tabs-python"
@@ -20,11 +21,16 @@ md_maintainers = ["@prehensile"]
 
 ###
 # CHANGELOG
+# ---
+# 0.2
+# - call updateIndexItems whenever the plugin is triggered
+# - take searchString from list-tabs.js and pass it to IndexItem
 #
 
 ###
 # TODO
-# - call updateIndexItems whenever the plugin is triggered, with some debounce 
+# ---
+# - fetch favicons
 #
 
 
@@ -39,6 +45,7 @@ class TabItem:
     tab_index : int
     window_id : int
     url_icon : str
+    search_string : str
 
 
 def get_webkit_tabs( browser ):
@@ -63,7 +70,8 @@ def get_webkit_tabs( browser ):
                 window_id = j["windowId"],
                 tab_index = j["tabIndex"],
                 browser = browser,
-                url_icon = j["iconUrl"]
+                url_icon = j["iconUrl"],
+                search_string = j["searchString"]
             )
             yield ti
     
@@ -83,21 +91,53 @@ def switch_to_tab( tab_item:TabItem ):
     )
 
 
+debounce_time = 5.0 # seconds
+
 class Plugin( PluginInstance, IndexQueryHandler ):
 
     def __init__(self):
         PluginInstance.__init__(self)
         IndexQueryHandler.__init__(self)
         self.thread = None
+        self.lastQueryTime = 0
+        self.lastQueryString = None
     
-    # def handleGlobalQuery(self, query: Query) -> List[RankItem]:
-    #     print( "tabs: handleGlobalQuery" )
-    #     self.updateIndexItems()
-    #     # super.handleGlobalQuery( query )
-    #     return self.indexItems
-            
+
+    def onQuery( self, query ):
+        # update index every time a query comes in, with some logic to debounce etc
+
+        now = time.time()
+        qs = query.string
+        
+        if(
+            query.isValid and
+            (
+                ( (self.lastQueryString is None) or ( self.lastQueryString not in qs) ) or
+                ( (now - self.lastQueryTime) > debounce_time )
+            )
+        ):
+            self.updateIndexItems()
+        
+        self.lastQueryString = qs
+        self.lastQueryTime = now
+
+
+    def handleTriggerQuery(self, query):
+        self.onQuery( query )        
+        return super().handleTriggerQuery(query)
+
+
+    def handleGlobalQuery(self, query):
+        self.onQuery( query )        
+        return super().handleGlobalQuery(query)
+
+
+    def itemAction( self, ti ):
+        self.lastQueryString = None
+        switch_to_tab( ti )
+
+
     def updateIndexItems(self):
-        print( "tabs: updateIndexItems" )
         if self.thread and self.thread.is_alive():
             self.thread.join()
         self.thread = threading.Thread(target=self.update_index_items_worker)
@@ -111,24 +151,24 @@ class Plugin( PluginInstance, IndexQueryHandler ):
             item = StandardItem(
                 id = url,
                 text = title if title else url,
-                subtext = url[ url.find("://") + 3: ],
+                subtext = "⧉ " + url[ url.find("://") + 3: ],
                 iconUrls = [
                     # TODO: fetch favicon
                     url,
                     tab_item.url_icon
                 ],
                 actions=[
-                    Action( "focus", "Focus tab", lambda ti=tab_item: switch_to_tab(ti) )
+                    Action( "focus", "Focus tab", lambda ti=tab_item: self.itemAction(ti) )
                 ],
             )
             # Create searchable string for the item
             index_items.append(
                 IndexItem(
                     item = item,
-                    string = f"{title} {url}".lower()
+                    string = tab_item.search_string
                 )
             )
-        self.setIndexItems( index_items )
+            self.setIndexItems( index_items )
 
 
 if __name__ == "__main__":
