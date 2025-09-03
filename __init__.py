@@ -1,3 +1,4 @@
+import re
 import subprocess
 import json
 import threading
@@ -5,12 +6,13 @@ from dataclasses import dataclass
 from typing import List
 from pathlib import Path
 import time
+from urllib.parse import urlparse
 
 from albert import *
 
 
 md_iid = '3.0'
-md_version = '0.2'
+md_version = '0.3'
 md_name = 'Browser Tabs (macOS)'
 md_description = 'Lists open tabs in browsers on macOS'
 md_url = "https://github.com/prehensile/albert-plugin-tabs-python"
@@ -26,10 +28,14 @@ md_maintainers = ["@prehensile"]
 # - call updateIndexItems whenever the plugin is triggered
 # - take searchString from list-tabs.js and pass it to IndexItem
 #
+# 0.3
+# - improved IndexItem lookup string
+# 
 
 ###
 # TODO
 # ---
+# - work out why the index is empty on the first couple of triggers
 # - fetch favicons
 #
 
@@ -146,8 +152,10 @@ class Plugin( PluginInstance, IndexQueryHandler ):
     def update_index_items_worker(self):
         index_items = []
         for tab_item in get_webkit_tabs( "Orion" ):
+            
             title = tab_item.title
             url = tab_item.url
+            
             item = StandardItem(
                 id = url,
                 text = title if title else url,
@@ -161,13 +169,25 @@ class Plugin( PluginInstance, IndexQueryHandler ):
                     Action( "focus", "Focus tab", lambda ti=tab_item: self.itemAction(ti) )
                 ],
             )
+            
+            parsed_url = urlparse(url)
+            search_str = " ".join([
+                parsed_url.hostname.replace("www.", "").replace(".", " "),
+                title,
+                re.sub(r'[^a-zA-Z]', ' ', parsed_url.path)
+            ])
+            
+            print( search_str )
+
             # Create searchable string for the item
             index_items.append(
                 IndexItem(
                     item = item,
-                    string = tab_item.search_string
+                    string = search_str
                 )
             )
+            
+            # update index items atomically
             self.setIndexItems( index_items )
 
 
