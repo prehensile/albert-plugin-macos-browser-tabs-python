@@ -1,3 +1,4 @@
+import os
 import re
 import subprocess
 import json
@@ -7,12 +8,13 @@ from typing import List
 from pathlib import Path
 import time
 from urllib.parse import urlparse
+import logging
 
 from albert import *
 
 
 md_iid = '3.0'
-md_version = '0.3'
+md_version = '0.4'
 md_name = 'Browser Tabs (macOS)'
 md_description = 'Lists open tabs in browsers on macOS'
 md_url = "https://github.com/prehensile/albert-plugin-tabs-python"
@@ -31,13 +33,17 @@ md_maintainers = ["@prehensile"]
 # 0.3
 # - improved IndexItem lookup string
 # 
+# 0.4
+# - Added sensible logging
+# - Improved empty index on early triggers and logic around when updateIndexItems happens
+#
+
 
 ###
 # TODO
 # ---
-# - work out why the index is empty on the first couple of triggers
 # - fetch favicons
-#
+# - clever diffing on index rebuild so that we only update what's changed
 
 
 list_js = Path(__file__).parent / "list-tabs.js"
@@ -52,6 +58,21 @@ class TabItem:
     window_id : int
     url_icon : str
     search_string : str
+
+
+def init_logger( level=None ):
+    l = logging.getLogger('plugin-tabs')
+    if level is None:
+        handler = logging.NullHandler()
+    else:
+        handler = logging.StreamHandler()
+        l.setLevel( level )
+    l.addHandler(handler)
+    return l
+
+_logger:logging.Logger = init_logger(
+    os.getenv( "PLUGIN_TABS_LOG_LEVEL" )
+)
 
 
 def get_webkit_tabs( browser ):
@@ -82,7 +103,8 @@ def get_webkit_tabs( browser ):
             yield ti
     
     except subprocess.CalledProcessError as e:
-        print(f"Error getting tabs with titles: {e}")
+        _logger.error( f"Error getting tabs" )
+        _logger.exception( e )
         return []
 
 
@@ -107,6 +129,8 @@ class Plugin( PluginInstance, IndexQueryHandler ):
         self.thread = None
         self.lastQueryTime = 0
         self.lastQueryString = None
+        self.lastIndexItems = []
+        self.setIndexItems( self.lastIndexItems )
     
 
     def onQuery( self, query ):
@@ -115,10 +139,18 @@ class Plugin( PluginInstance, IndexQueryHandler ):
         now = time.time()
         qs = query.string
         
+        _logger.debug( "plugin-tabs: onQuery %s %s", qs, query.isValid )
+
+        
         if(
-            query.isValid and
+            query.isValid and 
+            ( not ( self.thread and self.thread.is_alive() ) ) and
             (
-                ( (self.lastQueryString is None) or ( self.lastQueryString not in qs) ) or
+                (
+                    (self.lastQueryString is None) or
+                    (self.lastQueryString[0] != qs[0]) # probably a whole new query
+                ) 
+                or
                 ( (now - self.lastQueryTime) > debounce_time )
             )
         ):
@@ -138,18 +170,30 @@ class Plugin( PluginInstance, IndexQueryHandler ):
         return super().handleGlobalQuery(query)
 
 
+    def setIndexItems( self, items ):
+        _logger.debug( "setIndexItems with item count: %d", len(items) )
+        self.lastIndexItems = items
+        return super().setIndexItems( items )
+
+
     def itemAction( self, ti ):
         self.lastQueryString = None
         switch_to_tab( ti )
 
 
     def updateIndexItems(self):
+        _logger.debug( "!!plugin-tabs: update_index_items" )
         if self.thread and self.thread.is_alive():
             self.thread.join()
-        self.thread = threading.Thread(target=self.update_index_items_worker)
-        self.thread.start()
+        else:
+            self.thread = threading.Thread(target=self.update_index_items_worker)
+            self.thread.start()
+
 
     def update_index_items_worker(self):
+
+        _logger.debug( "!!!plugin-tabs: update_index_items_worker" )
+
         index_items = []
         for tab_item in get_webkit_tabs( "Orion" ):
             
@@ -185,8 +229,8 @@ class Plugin( PluginInstance, IndexQueryHandler ):
                 )
             )
             
-            # update index items atomically
-            self.setIndexItems( index_items )
+        _logger.debug( "--> calling setIndexItems with index_items count: %d", len(index_items) )
+        self.setIndexItems( index_items )
 
 
 if __name__ == "__main__":
