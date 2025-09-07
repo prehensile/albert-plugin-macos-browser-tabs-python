@@ -37,7 +37,11 @@ md_maintainers = ["@prehensile"]
 # - Added sensible logging
 # - Improved empty index on early triggers and logic around when updateIndexItems happens
 #
-
+# 0.5
+# - Removed hidden windows from index (amend to list-tabs.js)
+# - Tweaked index string generation
+# - Dedupe items
+#
 
 ###
 # TODO
@@ -119,7 +123,7 @@ def switch_to_tab( tab_item:TabItem ):
     )
 
 
-debounce_time = 5.0 # seconds
+debounce_time = 10.0 # seconds
 
 class Plugin( PluginInstance, IndexQueryHandler ):
 
@@ -131,6 +135,7 @@ class Plugin( PluginInstance, IndexQueryHandler ):
         self.lastQueryString = None
         self.lastIndexItems = []
         self.setIndexItems( self.lastIndexItems )
+        # IndexQueryHandler.setFuzzyMatching( self, True )
     
 
     def onQuery( self, query ):
@@ -193,13 +198,22 @@ class Plugin( PluginInstance, IndexQueryHandler ):
     def update_index_items_worker(self):
 
         _logger.debug( "!!!plugin-tabs: update_index_items_worker" )
-
+        
+        indexed_checkstrings = set()
         index_items = []
+        
         for tab_item in get_webkit_tabs( "Orion" ):
             
             title = tab_item.title
             url = tab_item.url
-            
+
+            # skip tabs with duplicate url + title pairs 
+            # (sometimes we have multiple tabs with the same url but different titles if they're e.g different views onto the same webapp)
+            checkstring = f"{title}{url}"
+            if checkstring in indexed_checkstrings:
+                continue
+            indexed_checkstrings.add( checkstring )
+
             item = StandardItem(
                 id = url,
                 text = title if title else url,
@@ -214,14 +228,16 @@ class Plugin( PluginInstance, IndexQueryHandler ):
                 ],
             )
             
+            # Create searchable string for the item
             parsed_url = urlparse(url)
             search_str = " ".join([
-                parsed_url.hostname.replace("www.", "").replace(".", " "),
                 title,
+                parsed_url.hostname.replace("www.", "").replace(".", " "),
                 re.sub(r'[^a-zA-Z]', ' ', parsed_url.path)
             ])
+
+            _logger.debug( f"{url}\n\t{search_str}" )
             
-            # Create searchable string for the item
             index_items.append(
                 IndexItem(
                     item = item,

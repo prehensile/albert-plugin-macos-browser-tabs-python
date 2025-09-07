@@ -36,29 +36,36 @@ function run(args) {
 
   for (let w = 0; w < windowCount; w++) {
 
-    const wid = app.windows[w].properties()["id"];
+    const wdw = app.windows[w];
+    
+    // skip hidden windows
+    // (window list for Orion contains loads of hidden windows which aren't shown in the UI)
+    if( !wdw.properties()["visible"] )
+      continue;
 
+    const wid = wdw.properties()["id"];
+    
     for (let t = 0; t < tabsTitle[w].length; t++) {
+      
       let url = tabsUrl[w][t] || "";
       let matchUrl = url.replace(/(^\w+:|^)\/\//, "");
       let title = tabsTitle[w][t] || matchUrl;
-
-       let item = {
-          title,
-          url,
+      // let searchString = `${title} ${decodeURIComponent(matchUrl).replace(
+      //   /[^\w]/g,
+      //   " ",
+      // )}`;
+      
+      let item = {
+          title: title,
+          url: url,
           windowId: wid,
           tabIndex: t,
           iconUrl : iconUrl,
-          searchString: `${title} ${decodeURIComponent(matchUrl).replace(
-            /[^\w]/g,
-            " ",
-          )}`,
+          searchString: "",
         };
-
       console.log(
         JSON.stringify( item )
       )
-
     }
   }
 
