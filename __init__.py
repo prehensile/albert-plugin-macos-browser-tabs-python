@@ -42,12 +42,19 @@ md_maintainers = ["@prehensile"]
 # - Tweaked index string generation
 # - Dedupe items
 #
+# 0.6
+# - Tested on Safari, Orion, and Chromium
+# - Tidied / slightly refactored list-tabs.js
+#
 
 ###
 # TODO
 # ---
 # - fetch favicons
 # - clever diffing on index rebuild so that we only update what's changed
+# - check browser is running when a new query starts
+# - automatically check for all supported browsers
+# 
 
 
 list_js = Path(__file__).parent / "list-tabs.js"
@@ -123,7 +130,7 @@ def switch_to_tab( tab_item:TabItem ):
     )
 
 
-debounce_time = 10.0 # seconds
+debounce_time = 60.0 # seconds
 
 class Plugin( PluginInstance, IndexQueryHandler ):
 

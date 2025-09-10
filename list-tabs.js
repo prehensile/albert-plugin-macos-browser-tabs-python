@@ -1,10 +1,28 @@
 #!/usr/bin/env osascript -l JavaScript
 
+function getApplicationPath( browserName ) {
+  
+  let ca = Application.currentApplication();
+  ca.includeStandardAdditions = true;
+  
+  const se = Application('System Events');
+  const process = se.processes.byName( browserName );
+  const bundleId = process.bundleIdentifier();
+  
+  const pth = ca.doShellScript(
+    `mdfind "kMDItemCFBundleIdentifier == ${bundleId}"`
+  )
+  
+  return pth
+}
+
+
 function run(args) {
   
   let browserName = args[0];
-  
-  if (!Application(browserName).running()) {
+  let app = Application(browserName);
+
+  if (!app.running()) {
     return JSON.stringify({
       items: [
         {
@@ -15,18 +33,6 @@ function run(args) {
     });
   }
 
-  let getApplicationPath = function(browserName) {
-    let app = Application.currentApplication();
-    app.includeStandardAdditions = true;
-    const se = Application('System Events');
-    const process = se.processes.byName( browserName );
-    const bundleId = process.bundleIdentifier();
-    const script = 'mdfind "kMDItemCFBundleIdentifier == ' + bundleId + '"';
-    const pth = app.doShellScript( script )
-    return pth
-  }
-
-  let app = Application(browserName);
   app.includeStandardAdditions = true;
   let windowCount = app.windows.length;
   let tabsTitle = app.windows.tabs.name();
