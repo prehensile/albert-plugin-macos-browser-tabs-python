@@ -14,9 +14,9 @@ from albert import *
 
 
 md_iid = '3.0'
-md_version = '0.4'
+md_version = '0.6'
 md_name = 'Browser Tabs (macOS)'
-md_description = 'Lists open tabs in browsers on macOS'
+md_description = 'Lists open tabs in Webkit and Chromium based browsers on macOS'
 md_url = "https://github.com/prehensile/albert-plugin-tabs-python"
 md_license = "WTFPL"
 md_authors = ["@prehensile"]
@@ -45,7 +45,10 @@ md_maintainers = ["@prehensile"]
 # 0.6
 # - Tested on Safari, Orion, and Chromium
 # - Tidied / slightly refactored list-tabs.js
+# - Amended hidden windows logic to include minimized windows
+# - Fixed an issue where urls without a hostname caused update_index_items_worker to crash
 #
+
 
 ###
 # TODO
@@ -204,53 +207,63 @@ class Plugin( PluginInstance, IndexQueryHandler ):
 
     def update_index_items_worker(self):
 
-        _logger.debug( "!!!plugin-tabs: update_index_items_worker" )
+        _logger.debug( "!!! plugin-tabs: update_index_items_worker" )
         
         indexed_checkstrings = set()
         index_items = []
         
         for tab_item in get_webkit_tabs( "Orion" ):
             
-            title = tab_item.title
-            url = tab_item.url
+            try:
 
-            # skip tabs with duplicate url + title pairs 
-            # (sometimes we have multiple tabs with the same url but different titles if they're e.g different views onto the same webapp)
-            checkstring = f"{title}{url}"
-            if checkstring in indexed_checkstrings:
-                continue
-            indexed_checkstrings.add( checkstring )
+                title = tab_item.title
+                url = tab_item.url
 
-            item = StandardItem(
-                id = url,
-                text = title if title else url,
-                subtext = "⧉ " + url[ url.find("://") + 3: ],
-                iconUrls = [
-                    # TODO: fetch favicon
-                    url,
-                    tab_item.url_icon
-                ],
-                actions=[
-                    Action( "focus", "Focus tab", lambda ti=tab_item: self.itemAction(ti) )
-                ],
-            )
-            
-            # Create searchable string for the item
-            parsed_url = urlparse(url)
-            search_str = " ".join([
-                title,
-                parsed_url.hostname.replace("www.", "").replace(".", " "),
-                re.sub(r'[^a-zA-Z]', ' ', parsed_url.path)
-            ])
+                # skip tabs with duplicate url + title pairs 
+                # (sometimes we have multiple tabs with the same url but different titles if they're e.g different views onto the same webapp)
+                checkstring = f"{title}{url}"
+                if checkstring in indexed_checkstrings:
+                    continue
+                indexed_checkstrings.add( checkstring )
 
-            _logger.debug( f"{url}\n\t{search_str}" )
-            
-            index_items.append(
-                IndexItem(
-                    item = item,
-                    string = search_str
+                item = StandardItem(
+                    id = url,
+                    text = title if title else url,
+                    subtext = "⧉ " + url[ url.find("://") + 3: ],
+                    iconUrls = [
+                        # TODO: fetch favicon
+                        url,
+                        tab_item.url_icon
+                    ],
+                    actions=[
+                        Action( "focus", "Focus tab", lambda ti=tab_item: self.itemAction(ti) )
+                    ],
                 )
-            )
+                
+                _logger.debug( tab_item )
+
+                # Create searchable string for the item
+                parsed_url = urlparse(url)
+                search_parts = [title]
+                # being careful about url parts here, because sometimes they're not there
+                if parsed_url.hostname:
+                    search_parts.append( parsed_url.hostname.replace("www.", "").replace(".", " ") )
+                if parsed_url.path:
+                    search_parts.append(
+                        re.sub(r'[^a-zA-Z]', ' ', parsed_url.path )
+                    )
+                search_str = " ".join( search_parts )
+                _logger.debug( f"{url}\n\t{search_str}" )
+                
+                index_items.append(
+                    IndexItem(
+                        item = item,
+                        string = search_str
+                    )
+                )
+            except Exception as e:
+                logging.error( "Exception in update_index_items_worker" )
+                logging.exception( e )
             
         _logger.debug( "--> calling setIndexItems with index_items count: %d", len(index_items) )
         self.setIndexItems( index_items )

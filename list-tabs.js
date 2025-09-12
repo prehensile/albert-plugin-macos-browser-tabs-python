@@ -44,9 +44,9 @@ function run(args) {
 
     const wdw = app.windows[w];
     
-    // skip hidden windows
-    // (window list for Orion contains loads of hidden windows which aren't shown in the UI)
-    if( !wdw.properties()["visible"] )
+    // skip windows which are not visible, and also not minimised
+    // (window list for Orion contains loads of these weird ghost windows)
+    if( (!wdw.properties()["visible"]) && (!wdw.properties()["miniaturized"]) )
       continue;
 
     const wid = wdw.properties()["id"];
