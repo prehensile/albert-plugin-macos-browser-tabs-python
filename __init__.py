@@ -2,6 +2,7 @@ import os
 import re
 import subprocess
 import json
+import sys
 import threading
 from dataclasses import dataclass
 from typing import List
@@ -14,7 +15,7 @@ from albert import *
 
 
 md_iid = '3.0'
-md_version = '0.6'
+md_version = '0.7'
 md_name = 'Browser Tabs (macOS)'
 md_description = 'Lists open tabs in Webkit and Chromium based browsers on macOS'
 md_url = "https://github.com/prehensile/albert-plugin-tabs-python"
@@ -26,6 +27,7 @@ md_maintainers = ["@prehensile"]
 ###
 # CHANGELOG
 # ---
+#
 # 0.2
 # - call updateIndexItems whenever the plugin is triggered
 # - take searchString from list-tabs.js and pass it to IndexItem
@@ -47,6 +49,9 @@ md_maintainers = ["@prehensile"]
 # - Tidied / slightly refactored list-tabs.js
 # - Amended hidden windows logic to include minimized windows
 # - Fixed an issue where urls without a hostname caused update_index_items_worker to crash
+#
+# 0.7
+# - Support for multiple concurrent browsers
 #
 
 
@@ -75,13 +80,23 @@ class TabItem:
 
 
 def init_logger( level=None ):
-    l = logging.getLogger('plugin-tabs')
+    
     if level is None:
-        handler = logging.NullHandler()
-    else:
-        handler = logging.StreamHandler()
-        l.setLevel( level )
+        return
+    
+    l = logging.getLogger('plugin-tabs')
+    l.setLevel( level )
+    
+    handler = logging.StreamHandler()
+
+    formatter = logging.Formatter(
+        fmt = "%(asctime)s [%(levelname)s:%(name)s] %(message)s",
+        datefmt = "%H:%M:%S"
+    )
+    handler.setFormatter(formatter)
+
     l.addHandler(handler)
+    
     return l
 
 _logger:logging.Logger = init_logger(
@@ -89,7 +104,7 @@ _logger:logging.Logger = init_logger(
 )
 
 
-def get_webkit_tabs( browser ):
+def get_browser_tabs( browser ):
     """
     Get URLs and titles of all webkit tabs.
     Yields a list of TabItems
@@ -119,7 +134,6 @@ def get_webkit_tabs( browser ):
     except subprocess.CalledProcessError as e:
         _logger.error( f"Error getting tabs" )
         _logger.exception( e )
-        return []
 
 
 def switch_to_tab( tab_item:TabItem ):
@@ -140,13 +154,13 @@ class Plugin( PluginInstance, IndexQueryHandler ):
     def __init__(self):
         PluginInstance.__init__(self)
         IndexQueryHandler.__init__(self)
-        self.thread = None
         self.lastQueryTime = 0
         self.lastQueryString = None
-        self.lastIndexItems = []
-        self.setIndexItems( self.lastIndexItems )
-        # IndexQueryHandler.setFuzzyMatching( self, True )
-    
+        self.indexItemsByBrowser = {}
+        self.browsers = [ "Orion", "Safari", "Chromium" ]
+        self.browser_threads = {}
+        self.setIndexItems( [] )
+
 
     def onQuery( self, query ):
         # update index every time a query comes in, with some logic to debounce etc
@@ -155,11 +169,9 @@ class Plugin( PluginInstance, IndexQueryHandler ):
         qs = query.string
         
         _logger.debug( "plugin-tabs: onQuery %s %s", qs, query.isValid )
-
         
         if(
             query.isValid and 
-            ( not ( self.thread and self.thread.is_alive() ) ) and
             (
                 (
                     (self.lastQueryString is None) or
@@ -187,7 +199,6 @@ class Plugin( PluginInstance, IndexQueryHandler ):
 
     def setIndexItems( self, items ):
         _logger.debug( "setIndexItems with item count: %d", len(items) )
-        self.lastIndexItems = items
         return super().setIndexItems( items )
 
 
@@ -196,23 +207,40 @@ class Plugin( PluginInstance, IndexQueryHandler ):
         switch_to_tab( ti )
 
 
-    def updateIndexItems(self):
-        _logger.debug( "!!plugin-tabs: update_index_items" )
-        if self.thread and self.thread.is_alive():
-            self.thread.join()
-        else:
-            self.thread = threading.Thread(target=self.update_index_items_worker)
-            self.thread.start()
+    def updateIndexItems( self ):
+        _logger.debug( "update_index_items" )
+        browser_thread = None
+        for browser in self.browsers:
+            if browser in self.browser_threads:
+                browser_thread = self.browser_threads[ browser ]
+                if browser_thread and browser_thread.is_alive():
+                    # browser_thread.join()
+                    return
+            browser_thread = threading.Thread(
+                target = self.update_index_items_worker,
+                args = (browser,)
+            )
+            browser_thread.start()
+            self.browser_threads[ browser ] = browser_thread
 
 
-    def update_index_items_worker(self):
+    def setIndexItemsForBrowser( self, browser, index_items ):
+        _logger.info( f"setIndexItemsForBrowser: {browser} with {len(index_items)} items" )
+        self.indexItemsByBrowser[browser] = index_items
+        all_items = []
+        for items in self.indexItemsByBrowser.values():
+            all_items.extend( items )
+        self.setIndexItems( index_items )
 
-        _logger.debug( "!!! plugin-tabs: update_index_items_worker" )
+
+    def update_index_items_worker( self, browser ):
+
+        _logger.debug( f"!!! plugin-tabs: update_index_items_worker: {browser}" )
         
         indexed_checkstrings = set()
         index_items = []
         
-        for tab_item in get_webkit_tabs( "Orion" ):
+        for tab_item in get_browser_tabs( browser ):
             
             try:
 
@@ -262,13 +290,12 @@ class Plugin( PluginInstance, IndexQueryHandler ):
                     )
                 )
             except Exception as e:
-                logging.error( "Exception in update_index_items_worker" )
-                logging.exception( e )
+                _logger.error( "Exception in update_index_items_worker" )
+                _logger.exception( e )
             
-        _logger.debug( "--> calling setIndexItems with index_items count: %d", len(index_items) )
-        self.setIndexItems( index_items )
+        self.setIndexItemsForBrowser( browser, index_items  )
 
 
 if __name__ == "__main__":
-    for tab in get_webkit_tabs( "Orion" ):
+    for tab in get_browser_tabs( sys.argv[1] ):
         print( tab )
