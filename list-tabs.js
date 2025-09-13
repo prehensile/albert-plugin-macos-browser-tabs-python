@@ -22,16 +22,7 @@ function run(args) {
   let browserName = args[0];
   let app = Application(browserName);
 
-  if (!app.running()) {
-    return JSON.stringify({
-      items: [
-        {
-          title: `${browserName} is not running`,
-          subtitle: `Press enter to launch ${browserName}`,
-        },
-      ],
-    });
-  }
+  if (!app.running()) return;
 
   app.includeStandardAdditions = true;
   let windowCount = app.windows.length;
