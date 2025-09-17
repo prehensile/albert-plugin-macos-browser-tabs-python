@@ -22,6 +22,7 @@ md_url = "https://github.com/prehensile/albert-plugin-tabs-python"
 md_license = "WTFPL"
 md_authors = ["@prehensile"]
 md_maintainers = ["@prehensile"]
+md_platforms = ["Darwin"]
 
 
 ###
@@ -52,21 +53,33 @@ md_maintainers = ["@prehensile"]
 #
 # 0.7
 # - Support for multiple concurrent browsers
+# - Added config widgets
+# - Tested on Brave, Vivaldi and Edge
 #
-
 
 ###
 # TODO
 # ---
 # - fetch favicons
-# - clever diffing on index rebuild so that we only update what's changed
-# - check browser is running when a new query starts
-# - automatically check for all supported browsers
-# 
+# -- from e.g /Users/prehensile/Library/Caches/com.kagi.kagimacOS.IconService
+# - clever diffing on index rebuild so that we only update what's changed and do it more quickly / atomically
+# -- e.g do atomic updates per-window
 
 
 list_js = Path(__file__).parent / "list-tabs.js"
 focus_js = Path(__file__).parent / 'focus-tab.js'
+
+_debounce_time = 60.0 # seconds
+
+_supported_browsers = [
+    ("Safari", "Webkit"),
+    ("Orion", "Webkit"),
+    ("Chrome", "Chromium"), 
+    ("Chromium", "Chromium"),
+    ("Brave", "Chromium"),
+    ("Vivaldi", "Chromium"),
+    ("Edge", "Chromium")
+]
 
 @dataclass
 class TabItem:
@@ -81,23 +94,23 @@ class TabItem:
 
 def init_logger( level=None ):
     
-    if level is None:
-        return
-    
     l = logging.getLogger('plugin-tabs')
-    l.setLevel( level )
-    
-    handler = logging.StreamHandler()
+    handler = None
 
-    formatter = logging.Formatter(
-        fmt = "%(asctime)s [%(levelname)s:%(name)s] %(message)s",
-        datefmt = "%H:%M:%S"
-    )
-    handler.setFormatter(formatter)
+    if level is None:
+        handler = logging.NullHandler()
+    else:
+        handler = logging.StreamHandler()
+        l.setLevel( level )
+        formatter = logging.Formatter(
+            fmt = "%(asctime)s [%(levelname)s:%(name)s] %(message)s",
+            datefmt = "%H:%M:%S"
+        )
+        handler.setFormatter(formatter)
 
     l.addHandler(handler)
-    
     return l
+
 
 _logger:logging.Logger = init_logger(
     os.getenv( "PLUGIN_TABS_LOG_LEVEL" )
@@ -147,9 +160,8 @@ def switch_to_tab( tab_item:TabItem ):
     )
 
 
-debounce_time = 60.0 # seconds
-
 class Plugin( PluginInstance, IndexQueryHandler ):
+
 
     def __init__(self):
         PluginInstance.__init__(self)
@@ -157,9 +169,47 @@ class Plugin( PluginInstance, IndexQueryHandler ):
         self.lastQueryTime = 0
         self.lastQueryString = None
         self.indexItemsByBrowser = {}
-        self.browsers = [ "Orion", "Safari", "Chromium" ]
         self.browser_threads = {}
         self.setIndexItems( [] )
+        self.load_config()
+
+
+    def load_config(self):
+        for browser, _ in _supported_browsers:
+            prop_name = f'prop_{browser}'
+            prop = self.readConfig(prop_name, bool)
+            v = bool(prop)
+            _logger.debug(f"loadConfig:{browser}, {prop}, {v}")
+            setattr(self, prop_name, v)
+
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        _logger.debug(f"__setattr__: {name}, {value}")
+        if name.startswith('prop_'):
+            self.writeConfig(name, value)
+
+
+    def configWidget(self):
+
+        widgets = [{
+            "type": "label", 
+            "text": "Include tabs from these browsers:"
+        }]
+        
+        current_category = None
+        for browser, category in _supported_browsers:
+            # if category and category != current_category:
+            #     widgets.append({"type": "label", "text": category})
+            #     current_category = category
+                
+            widgets.append({
+                "type": "checkbox",
+                "property": f"prop_{browser}",
+                "label": browser
+            })
+            
+        return widgets
 
 
     def onQuery( self, query ):
@@ -178,7 +228,7 @@ class Plugin( PluginInstance, IndexQueryHandler ):
                     (self.lastQueryString[0] != qs[0]) # probably a whole new query
                 ) 
                 or
-                ( (now - self.lastQueryTime) > debounce_time )
+                ( (now - self.lastQueryTime) > _debounce_time )
             )
         ):
             self.updateIndexItems()
@@ -208,29 +258,43 @@ class Plugin( PluginInstance, IndexQueryHandler ):
 
 
     def updateIndexItems( self ):
+        
         _logger.debug( "update_index_items" )
+        
         browser_thread = None
-        for browser in self.browsers:
+        
+        for browser, _ in _supported_browsers:
+
+            # skip browsers turned off in config
+            if not getattr(self, f"prop_{browser}" ):
+                continue
+        
             if browser in self.browser_threads:
+            
                 browser_thread = self.browser_threads[ browser ]
                 if browser_thread and browser_thread.is_alive():
                     # browser_thread.join()
                     return
+           
             browser_thread = threading.Thread(
                 target = self.update_index_items_worker,
                 args = (browser,)
             )
+            
             browser_thread.start()
             self.browser_threads[ browser ] = browser_thread
 
 
     def setIndexItemsForBrowser( self, browser, index_items ):
         _logger.info( f"setIndexItemsForBrowser: {browser} with {len(index_items)} items" )
+        
         self.indexItemsByBrowser[browser] = index_items
+        
         all_items = []
         for items in self.indexItemsByBrowser.values():
             all_items.extend( items )
-        self.setIndexItems( index_items )
+        
+        self.setIndexItems( all_items )
 
 
     def update_index_items_worker( self, browser ):
