@@ -17,8 +17,8 @@ from albert import *
 md_iid = '3.0'
 md_version = '0.7'
 md_name = 'Browser Tabs (macOS)'
-md_description = 'Lists open tabs in Webkit and Chromium based browsers on macOS'
-md_url = "https://github.com/prehensile/albert-plugin-tabs-python"
+md_description = 'Lists and focuses open tabs in Webkit and Chromium based browsers on macOS'
+md_url = "https://github.com/prehensile/albert-plugin-macos-browser-tabs-python"
 md_license = "WTFPL"
 md_authors = ["@prehensile"]
 md_maintainers = ["@prehensile"]
@@ -56,6 +56,10 @@ md_platforms = ["Darwin"]
 # - Added config widgets
 # - Tested on Brave, Vivaldi and Edge
 #
+# 0.71
+# - Fixed an exception where list-tabs.js doesn't return anything
+# - Added README
+# 
 
 ###
 # TODO
@@ -132,17 +136,21 @@ def get_browser_tabs( browser ):
         )
 
         for line in proc.stderr:
-            j = json.loads( line )
-            ti = TabItem(
-                title = j["title"],
-                url = j["url"],
-                window_id = j["windowId"],
-                tab_index = j["tabIndex"],
-                browser = browser,
-                url_icon = j["iconUrl"],
-                search_string = j["searchString"]
-            )
-            yield ti
+            if line and len(line) > 0:
+                try:
+                    j = json.loads( line )
+                    ti = TabItem(
+                        title = j["title"],
+                        url = j["url"],
+                        window_id = j["windowId"],
+                        tab_index = j["tabIndex"],
+                        browser = browser,
+                        url_icon = j["iconUrl"],
+                        search_string = j["searchString"]
+                    )
+                    yield ti
+                except json.JSONDecodeError as e:
+                    _logger.exception( e )
     
     except subprocess.CalledProcessError as e:
         _logger.error( f"Error getting tabs" )
