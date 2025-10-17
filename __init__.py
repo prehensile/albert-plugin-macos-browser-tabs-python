@@ -59,16 +59,19 @@ md_platforms = ["Darwin"]
 # 0.71
 # - Fixed an exception where list-tabs.js doesn't return anything
 # - Added README
-# 
+#  
+# 0.72
+# - Added a loading item to display while tabs are being indexed
+#
 
 ###
 # TODO
 # ---
 # - fetch favicons
-# -- from e.g /Users/prehensile/Library/Caches/com.kagi.kagimacOS.IconService
+# --> from e.g /Users/prehensile/Library/Caches/com.kagi.kagimacOS.IconService
 # - clever diffing on index rebuild so that we only update what's changed and do it more quickly / atomically
-# -- e.g do atomic updates per-window
-
+# --> e.g do atomic updates per-window
+#
 
 list_js = Path(__file__).parent / "list-tabs.js"
 focus_js = Path(__file__).parent / 'focus-tab.js'
@@ -166,6 +169,17 @@ def switch_to_tab( tab_item:TabItem ):
         ],
         check=True
     )
+
+
+def loading_item():
+    return IndexItem(
+        item = StandardItem(
+            id = '',
+            text = "Browser tabs are being indexed...",
+        ),
+        string = ""
+    )
+
 
 
 class Plugin( PluginInstance, IndexQueryHandler ):
@@ -269,8 +283,12 @@ class Plugin( PluginInstance, IndexQueryHandler ):
         
         _logger.debug( "update_index_items" )
         
-        browser_thread = None
+        if not self.indexItemsByBrowser:
+            # index items are currently empty
+            self.setIndexItems([loading_item()])
         
+        browser_thread = None
+
         for browser, _ in _supported_browsers:
 
             # skip browsers turned off in config
