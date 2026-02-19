@@ -29,7 +29,8 @@ function run(args) {
   let tabsTitle = app.windows.tabs.name();
   let tabsUrl = app.windows.tabs.url();
 
-  let iconUrl = "qfip:" + getApplicationPath( browserName );
+  let browserPath = getApplicationPath( browserName );
+  let iconUrl = "qfip:" + browserPath;
 
   for (let w = 0; w < windowCount; w++) {
 
@@ -53,12 +54,13 @@ function run(args) {
       // )}`;
       
       let item = {
-          title: title,
-          url: url,
+          title,
+          url,
           windowId: wid,
           tabIndex: t,
-          iconUrl : iconUrl,
+          iconUrl,
           searchString: "",
+          browserPath
         };
       console.log(
         JSON.stringify( item )

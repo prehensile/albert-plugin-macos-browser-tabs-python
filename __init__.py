@@ -14,8 +14,8 @@ import logging
 from albert import *
 
 
-md_iid = '3.0'
-md_version = '0.7'
+md_iid = "5.0"
+md_version = '0.8'
 md_name = 'Browser Tabs (macOS)'
 md_description = 'Lists and focuses open tabs in Webkit and Chromium based browsers on macOS'
 md_url = "https://github.com/prehensile/albert-plugin-macos-browser-tabs-python"
@@ -63,6 +63,10 @@ md_platforms = ["Darwin"]
 # 0.72
 # - Added a loading item to display while tabs are being indexed
 #
+# 0.8
+# - Updated for Python plugin interface v5.0
+# - Reworked to inherit Plugin class from generic PrhnslAlbertPlugin
+#
 
 ###
 # TODO
@@ -97,117 +101,120 @@ class TabItem:
     window_id : int
     url_icon : str
     search_string : str
+    browser_path : str
 
-
-def init_logger( level=None ):
+class PrhnslAlbertPlugin( PluginInstance, IndexQueryHandler ):
     
-    l = logging.getLogger('plugin-tabs')
-    handler = None
-
-    if level is None:
-        handler = logging.NullHandler()
-    else:
-        handler = logging.StreamHandler()
-        l.setLevel( level )
-        formatter = logging.Formatter(
-            fmt = "%(asctime)s [%(levelname)s:%(name)s] %(message)s",
-            datefmt = "%H:%M:%S"
-        )
-        handler.setFormatter(formatter)
-
-    l.addHandler(handler)
-    return l
-
-
-_logger:logging.Logger = init_logger(
-    os.getenv( "PLUGIN_TABS_LOG_LEVEL" )
-)
-
-
-def get_browser_tabs( browser ):
     """
-    Get URLs and titles of all webkit tabs.
-    Yields a list of TabItems
+    Provides logging and threaded workers on top of the stock Albert plugin class.
     """
     
-    try:
-        proc = subprocess.Popen(
-            [ list_js, browser ],
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
-
-        for line in proc.stderr:
-            if line and len(line) > 0:
-                try:
-                    j = json.loads( line )
-                    ti = TabItem(
-                        title = j["title"],
-                        url = j["url"],
-                        window_id = j["windowId"],
-                        tab_index = j["tabIndex"],
-                        browser = browser,
-                        url_icon = j["iconUrl"],
-                        search_string = j["searchString"]
-                    )
-                    yield ti
-                except json.JSONDecodeError as e:
-                    _logger.exception( e )
+    version = 20260218.1
+    # upodated for Albert Python plugin interface v5.0
     
-    except subprocess.CalledProcessError as e:
-        _logger.error( f"Error getting tabs" )
-        _logger.exception( e )
-
-
-def switch_to_tab( tab_item:TabItem ):
-    subprocess.run([
-            focus_js,
-            tab_item.browser,
-            str(tab_item.window_id),
-            str(tab_item.tab_index)
-        ],
-        check=True
-    )
-
-
-def loading_item():
-    return IndexItem(
-        item = StandardItem(
-            id = '',
-            text = "Browser tabs are being indexed...",
-        ),
-        string = ""
-    )
-
-
-
-class Plugin( PluginInstance, IndexQueryHandler ):
-
-
     def __init__(self):
+        logging.debug("PrhnslAlbertPlugin.__init__")
         PluginInstance.__init__(self)
         IndexQueryHandler.__init__(self)
         self.lastQueryTime = 0
         self.lastQueryString = None
+        self.debounce_time = 60.0 # seconds
+        self.thread = None
+        self.logger = self.init_logger()
+        self.setIndexItems( [] )
+    
+    def get_logname( self ):
+        return type( self )
+
+    def get_loglevel( self ):
+        return None
+    
+    def init_logger( self ):
+        
+        logname = self.get_logname()
+        level = self.get_loglevel()
+    
+        l = logging.getLogger( logname )
+        handler = None
+
+        if level is None:
+            handler = logging.NullHandler()
+        else:
+            handler = logging.StreamHandler()
+            l.setLevel( level )
+            formatter = logging.Formatter(
+                fmt = "%(asctime)s [%(levelname)s:%(name)s] %(message)s",
+                datefmt = "%H:%M:%S"
+            )
+            handler.setFormatter(formatter)
+
+        l.addHandler(handler)
+        return l
+    
+    def onQuery( self, query ):
+        # update index every time a query comes in, with some logic to debounce etc
+
+        now = time.time()
+        qs = query.string
+        
+        self.logger.debug( "onQuery %s %s", qs, query.isValid )
+        
+        if(
+            query.isValid and 
+            (
+                (
+                    (self.lastQueryString is None) or
+                    (self.lastQueryString[0] != qs[0]) # probably a whole new query
+                ) 
+                or
+                ( (now - self.lastQueryTime) > self.debounce_time )
+            )
+        ):
+            self.updateIndexItems()
+        
+        self.lastQueryString = qs
+        self.lastQueryTime = now
+
+    # def setIndexItems( self, items ):
+    #     self.logger.debug( "setIndexItems with item count: %d", len(items) )
+        # return super().setIndexItems( items )
+
+    def updateIndexItems( self ):
+        self.logger.debug( "update_index_items" )
+        if self.thread and self.thread.is_alive():
+            # self.thread.join()
+            return
+        self.thread = threading.Thread(
+            target = self.update_index_items_worker
+        )
+        self.thread.start()
+
+
+class Plugin( PrhnslAlbertPlugin ):
+        
+    def get_logname( self ):
+        return "plugin-browser-tabs"
+
+    def get_loglevel( self ):
+        return os.getenv( "PLUGIN_TABS_LOG_LEVEL" )
+    
+    def __init__(self):
         self.indexItemsByBrowser = {}
         self.browser_threads = {}
-        self.setIndexItems( [] )
+        PrhnslAlbertPlugin.__init__(self)
         self.load_config()
-
 
     def load_config(self):
         for browser, _ in _supported_browsers:
             prop_name = f'prop_{browser}'
             prop = self.readConfig(prop_name, bool)
             v = bool(prop)
-            _logger.debug(f"loadConfig:{browser}, {prop}, {v}")
+            self.logger.debug(f"loadConfig:{browser}, {prop}, {v}")
             setattr(self, prop_name, v)
 
 
     def __setattr__(self, name, value):
         super().__setattr__(name, value)
-        _logger.debug(f"__setattr__: {name}, {value}")
         if name.startswith('prop_'):
             self.writeConfig(name, value)
 
@@ -233,59 +240,77 @@ class Plugin( PluginInstance, IndexQueryHandler ):
             
         return widgets
 
-
-    def onQuery( self, query ):
-        # update index every time a query comes in, with some logic to debounce etc
-
-        now = time.time()
-        qs = query.string
+    
+    def get_browser_tabs( self, browser ):
+        """
+        Get URLs and titles of all webkit tabs.
+        Yields a list of TabItems
+        """
         
-        _logger.debug( "plugin-tabs: onQuery %s %s", qs, query.isValid )
+        try:
+            with subprocess.Popen(
+                [ list_js, browser ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            ) as proc:
+
+                for line in proc.stderr:
+                    if line and len(line) > 0:
+                        try:
+                            j = json.loads( line )
+                            ti = TabItem(
+                                title = j["title"],
+                                url = j["url"],
+                                window_id = j["windowId"],
+                                tab_index = j["tabIndex"],
+                                browser = browser,
+                                url_icon = j["iconUrl"],
+                                search_string = j["searchString"],
+                                browser_path = j["browserPath"]
+                            )
+                            yield ti
+                        except json.JSONDecodeError as e:
+                            self.logger.exception( e )
         
-        if(
-            query.isValid and 
-            (
-                (
-                    (self.lastQueryString is None) or
-                    (self.lastQueryString[0] != qs[0]) # probably a whole new query
-                ) 
-                or
-                ( (now - self.lastQueryTime) > _debounce_time )
-            )
-        ):
-            self.updateIndexItems()
-        
-        self.lastQueryString = qs
-        self.lastQueryTime = now
+        except subprocess.CalledProcessError as e:
+            self.logger.error( f"Error getting tabs" )
+            self.logger.exception( e )
 
 
-    def handleTriggerQuery(self, query):
-        self.onQuery( query )        
-        return super().handleTriggerQuery(query)
+    def switch_to_tab( self, tab_item:TabItem ):
+        subprocess.run([
+                focus_js,
+                tab_item.browser,
+                str(tab_item.window_id),
+                str(tab_item.tab_index)
+            ],
+            check=True
+        )
 
 
-    def handleGlobalQuery(self, query):
-        self.onQuery( query )        
-        return super().handleGlobalQuery(query)
-
-
-    def setIndexItems( self, items ):
-        _logger.debug( "setIndexItems with item count: %d", len(items) )
-        return super().setIndexItems( items )
+    def loading_item( self ):
+        return IndexItem(
+            item = StandardItem(
+                id = '',
+                text = "Browser tabs are being indexed...",
+            ),
+            string = ""
+        )
 
 
     def itemAction( self, ti ):
         self.lastQueryString = None
-        switch_to_tab( ti )
+        self.switch_to_tab( ti )
 
 
     def updateIndexItems( self ):
         
-        _logger.debug( "update_index_items" )
+        self.logger.debug( "update_index_items" )
         
         if not self.indexItemsByBrowser:
             # index items are currently empty
-            self.setIndexItems([loading_item()])
+            self.setIndexItems([self.loading_item()])
         
         browser_thread = None
 
@@ -312,7 +337,7 @@ class Plugin( PluginInstance, IndexQueryHandler ):
 
 
     def setIndexItemsForBrowser( self, browser, index_items ):
-        _logger.info( f"setIndexItemsForBrowser: {browser} with {len(index_items)} items" )
+        self.logger.info( f"setIndexItemsForBrowser: {browser} with {len(index_items)} items" )
         
         self.indexItemsByBrowser[browser] = index_items
         
@@ -323,14 +348,20 @@ class Plugin( PluginInstance, IndexQueryHandler ):
         self.setIndexItems( all_items )
 
 
+    def icon_factory( self, tab_item:TabItem ):
+        # TODO: fetch favicon
+        #     url,
+        #     tab_item.url_icon
+        return Icon.fileType( tab_item.browser_path )
+    
     def update_index_items_worker( self, browser ):
 
-        _logger.debug( f"!!! plugin-tabs: update_index_items_worker: {browser}" )
+        self.logger.debug( f"!!! plugin-tabs: update_index_items_worker: {browser}" )
         
         indexed_checkstrings = set()
         index_items = []
         
-        for tab_item in get_browser_tabs( browser ):
+        for tab_item in self.get_browser_tabs( browser ):
             
             try:
 
@@ -344,21 +375,20 @@ class Plugin( PluginInstance, IndexQueryHandler ):
                     continue
                 indexed_checkstrings.add( checkstring )
 
+                item_text = title if title else url
+                
                 item = StandardItem(
                     id = url,
-                    text = title if title else url,
+                    text = item_text,
                     subtext = "⧉ " + url[ url.find("://") + 3: ],
-                    iconUrls = [
-                        # TODO: fetch favicon
-                        url,
-                        tab_item.url_icon
-                    ],
+                    icon_factory= lambda: self.icon_factory( tab_item ),
                     actions=[
                         Action( "focus", "Focus tab", lambda ti=tab_item: self.itemAction(ti) )
                     ],
+                    input_action_text = item_text
                 )
                 
-                _logger.debug( tab_item )
+                self.logger.debug( tab_item )
 
                 # Create searchable string for the item
                 parsed_url = urlparse(url)
@@ -371,7 +401,7 @@ class Plugin( PluginInstance, IndexQueryHandler ):
                         re.sub(r'[^a-zA-Z]', ' ', parsed_url.path )
                     )
                 search_str = " ".join( search_parts )
-                _logger.debug( f"{url}\n\t{search_str}" )
+                self.logger.debug( f"{url}\n\t{search_str}" )
                 
                 index_items.append(
                     IndexItem(
@@ -380,12 +410,7 @@ class Plugin( PluginInstance, IndexQueryHandler ):
                     )
                 )
             except Exception as e:
-                _logger.error( "Exception in update_index_items_worker" )
-                _logger.exception( e )
+                self.logger.error( "Exception in update_index_items_worker" )
+                self.logger.exception( e )
             
         self.setIndexItemsForBrowser( browser, index_items  )
-
-
-if __name__ == "__main__":
-    for tab in get_browser_tabs( sys.argv[1] ):
-        print( tab )
