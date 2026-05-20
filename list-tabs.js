@@ -32,14 +32,26 @@ function run(args) {
   let browserPath = getApplicationPath( browserName );
   let iconUrl = "qfip:" + browserPath;
 
+  let includeMinimized, includeHidden = false;
+  if(args.length > 1) includeMinimized = (args[1] === 1)
+  if(args.length > 2) includeHidden = (args[2] === 1)
+
   for (let w = 0; w < windowCount; w++) {
 
     const wdw = app.windows[w];
+
+    const winHidden = !wdw.properties()["visible"];
+    const winMinimized = wdw.properties()["miniaturized"];
     
     // skip windows which are not visible, and also not minimised
     // (window list for Orion contains loads of these weird ghost windows)
-    if( (!wdw.properties()["visible"]) && (!wdw.properties()["miniaturized"]) )
-      continue;
+    if( browserName =="Orion" ){
+      if( winHidden && (!winMinimized) )
+        continue;
+    }
+
+    // if(winHidden && !includeHidden) continue;
+    // if(winMinimized && !includeMinimized) continue;
 
     const wid = wdw.properties()["id"];
     
@@ -48,10 +60,6 @@ function run(args) {
       let url = tabsUrl[w][t] || "";
       let matchUrl = url.replace(/(^\w+:|^)\/\//, "");
       let title = tabsTitle[w][t] || matchUrl;
-      // let searchString = `${title} ${decodeURIComponent(matchUrl).replace(
-      //   /[^\w]/g,
-      //   " ",
-      // )}`;
       
       let item = {
           title,
@@ -60,7 +68,8 @@ function run(args) {
           tabIndex: t,
           iconUrl,
           searchString: "",
-          browserPath
+          browserPath,
+          browserName
         };
       console.log(
         JSON.stringify( item )
