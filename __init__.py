@@ -71,6 +71,10 @@ md_platforms = ["Darwin"]
 # - Added config widget: "Include minimized windows"
 # - Renamed config-bound properties from "prop_" to "config_", for clarity
 #
+# 0.82
+# - (Claude) Reworked JSX scripts for more robust matching between browser
+#   windows and user selection
+#
 
 ###
 # TODO
