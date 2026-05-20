@@ -15,7 +15,7 @@ from albert import *
 
 
 md_iid = "5.0"
-md_version = '0.8'
+md_version = '0.81'
 md_name = 'Browser Tabs (macOS)'
 md_description = 'Lists and focuses open tabs in Webkit and Chromium based browsers on macOS'
 md_url = "https://github.com/prehensile/albert-plugin-macos-browser-tabs-python"
@@ -67,6 +67,10 @@ md_platforms = ["Darwin"]
 # - Updated for Python plugin interface v5.0
 # - Reworked to inherit Plugin class from generic PrhnslAlbertPlugin
 #
+# 0.81
+# - Added config widget: "Include minimized windows"
+# - Renamed config-bound properties from "prop_" to "config_", for clarity
+#
 
 ###
 # TODO
@@ -109,18 +113,21 @@ class PrhnslAlbertPlugin( PluginInstance, IndexQueryHandler ):
     Provides logging and threaded workers on top of the stock Albert plugin class.
     """
     
-    version = 20260218.1
+    version = 20260305.1
     # upodated for Albert Python plugin interface v5.0
     
     def __init__(self):
-        logging.debug("PrhnslAlbertPlugin.__init__")
         PluginInstance.__init__(self)
         IndexQueryHandler.__init__(self)
+        
         self.lastQueryTime = 0
         self.lastQueryString = None
         self.debounce_time = 60.0 # seconds
         self.thread = None
+        
         self.logger = self.init_logger()
+        logging.debug( f"PrhnslAlbertPlugin.__init__: {md_iid}, version: {md_version}")
+        
         self.setIndexItems( [] )
     
     def get_logname( self ):
@@ -150,6 +157,23 @@ class PrhnslAlbertPlugin( PluginInstance, IndexQueryHandler ):
 
         l.addHandler(handler)
         return l
+    
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if name.startswith('conf_'):
+            self.logger.debug(f"__setattr__:{name}, {value}")
+            self.writeConfig(name, value)
+            # config has changed, reset lastQueryTime to force a re-index
+            self.lastQueryTime = 0
+            
+            
+    # def __getattr__(self, name ):
+    #     try:
+    #         return super().__getattr__(name)
+    #     except AttributeError as e:
+    #         if name.startswith('conf_'):
+    #             return None
+    #         raise
     
     def onQuery( self, query ):
         # update index every time a query comes in, with some logic to debounce etc
@@ -183,6 +207,7 @@ class PrhnslAlbertPlugin( PluginInstance, IndexQueryHandler ):
         self.logger.debug( "update_index_items" )
         if self.thread and self.thread.is_alive():
             # self.thread.join()
+            self.logger.debug("-> self.thread is not None, bailing")
             return
         self.thread = threading.Thread(
             target = self.update_index_items_worker
@@ -201,23 +226,22 @@ class Plugin( PrhnslAlbertPlugin ):
     def __init__(self):
         self.indexItemsByBrowser = {}
         self.browser_threads = {}
+        self.include_hidden = False
+        self.include_minimized = False
         PrhnslAlbertPlugin.__init__(self)
         self.load_config()
 
+
     def load_config(self):
         for browser, _ in _supported_browsers:
-            prop_name = f'prop_{browser}'
-            prop = self.readConfig(prop_name, bool)
+            conf_name = f'conf_{browser}'
+            prop = self.readConfig(conf_name, bool)
             v = bool(prop)
             self.logger.debug(f"loadConfig:{browser}, {prop}, {v}")
-            setattr(self, prop_name, v)
-
-
-    def __setattr__(self, name, value):
-        super().__setattr__(name, value)
-        if name.startswith('prop_'):
-            self.writeConfig(name, value)
-
+            setattr(self, conf_name, v)
+        self.include_hidden = self.readConfig("include_hidden", bool) or False
+        self.include_minimized = self.readConfig("include_minimized", bool) or False
+        
 
     def configWidget(self):
 
@@ -226,17 +250,23 @@ class Plugin( PrhnslAlbertPlugin ):
             "text": "Include tabs from these browsers:"
         }]
         
-        current_category = None
         for browser, category in _supported_browsers:
-            # if category and category != current_category:
-            #     widgets.append({"type": "label", "text": category})
-            #     current_category = category
-                
             widgets.append({
                 "type": "checkbox",
-                "property": f"prop_{browser}",
+                "property": f"conf_{browser}",
                 "label": browser
             })
+            
+        widgets += [{
+             "type": "checkbox",
+                "property": f"include_minimized",
+                "label": "Include minimized windows"
+        },
+        {
+             "type": "checkbox",
+                "property": f"include_hidden",
+                "label": "Include hidden windows"
+        }]
             
         return widgets
 
@@ -248,8 +278,9 @@ class Plugin( PrhnslAlbertPlugin ):
         """
         
         try:
+            
             with subprocess.Popen(
-                [ list_js, browser ],
+                [ list_js, browser, str(int(self.include_minimized)), str(int(self.include_hidden)) ],
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE
@@ -283,7 +314,8 @@ class Plugin( PrhnslAlbertPlugin ):
                 focus_js,
                 tab_item.browser,
                 str(tab_item.window_id),
-                str(tab_item.tab_index)
+                str(tab_item.tab_index),
+                tab_item.url
             ],
             check=True
         )
@@ -317,7 +349,7 @@ class Plugin( PrhnslAlbertPlugin ):
         for browser, _ in _supported_browsers:
 
             # skip browsers turned off in config
-            if not getattr(self, f"prop_{browser}" ):
+            if not getattr(self, f"conf_{browser}" ):
                 continue
         
             if browser in self.browser_threads:
